@@ -2,58 +2,46 @@
 
 L'exploitation repose sur la construction d'une chaîne ROP (Return-Oriented Programming) directement sur la pile. Puisque nous exploitons une vulnérabilité de format string avec une taille de buffer limitée, nous ne pouvons pas écrire toute la chaîne en une seule fois.
 
-Nous devons utiliser la boucle d'exploitation (créée en modifiant le LSB de l'adresse de retour) pour écrire la chaîne ROP élément par élément, itération après itération.
+Nous utilisons la boucle d'exploitation (créée en modifiant le LSB du Saved RIP à l'adresse \texttt{RBP+8}) pour écrire la chaîne ROP élément par élément dans les adresses supérieures.
 
-\subsection{Placement de la chaîne "/bin/sh"}
+\subsection{Placement des données}
 
 Pour obtenir un shell, nous devons appeler la fonction \texttt{system("/bin/sh")}.
-Selon la convention d'appel x86\_64, le premier argument d'une fonction doit être placé dans le registre \texttt{RDI}. Le registre \texttt{RDI} devra donc contenir \textbf{l'adresse mémoire} où est stockée la chaîne \texttt{"/bin/sh"}.
+Selon la convention d'appel x86\_64, le premier argument doit être placé dans le registre \texttt{RDI}. Le registre \texttt{RDI} devra donc contenir \textbf{l'adresse mémoire} (pointeur) vers la chaîne \texttt{"/bin/sh"}.
 
-\textbf{Choix de l'emplacement : Le Mot n°28}
-\begin{itemize}
-    \item L'analyse GDB a montré que le \textbf{Mot n°27} correspond à l'adresse de retour (Saved RIP) que nous utilisons pour boucler.
-    \item Le \textbf{Mot n°28} se situe juste au-dessus (adresse mémoire supérieure de 8 octets).
-    \item \textbf{Justification :} Cet emplacement se trouve dans la stack frame de la fonction appelante (\texttt{main}). Contrairement aux variables locales de \texttt{makePing} qui sont réinitialisées à chaque appel, cette zone reste stable au fil des itérations de la boucle. C'est une "Safe Zone" idéale pour stocker nos données.
-\end{itemize}
+\textbf{Zone de stockage de la chaîne :}
+Nous choisissons de stocker la chaîne \texttt{"/bin/sh"} à l'adresse \texttt{RBP + 40}.
+Cet emplacement est suffisamment éloigné pour ne pas interférer avec l'exécution du Gadget et de System.
 
 \textbf{Encodage Little Endian :}
-La mémoire étant adressée en Little Endian, nous devons inverser la chaîne hexadécimale pour qu'elle soit lisible correctement une fois en mémoire.
-\begin{itemize}
-    \item Chaîne : \texttt{/bin/sh\textbackslash0}
-    \item Hexadécimal brut : \texttt{2f 62 69 6e 2f 73 68 00}
-    \item Entier 64 bits (Little Endian) : \textbf{\texttt{0x0068732f6e69622f}}
-\end{itemize}
+La chaîne \texttt{/bin/sh\textbackslash0} est convertie en entier 64 bits inversé : \textbf{\texttt{0x0068732f6e69622f}}.
 
-\subsection{Stratégie d'insertion : L'Ordre Inverse}
+\subsection{Stratégie d'insertion et Structure ROP}
 
-La chaîne ROP finale, pour être exécutée séquentiellement par le processeur lors des instructions \texttt{RET}, doit être organisée ainsi sur la pile (du bas vers le haut) :
+La chaîne ROP finale est construite à partir de l'offset \texttt{RBP + 16}, juste après l'adresse de retour utilisée pour la boucle.
 
 \begin{table}[H]
     \centering
     \begin{tabular}{|c|c|l|l|}
         \hline
-        \textbf{Ordre d'exécution} & \textbf{Offset Pile} & \textbf{Contenu} & \textbf{Description} \\
+        \textbf{Offset Pile} & \textbf{Adresse Python} & \textbf{Contenu} & \textbf{Rôle} \\
         \hline
-        1 & Saved RIP & \texttt{Adresse Gadget} & \texttt{POP RDI ; RET} \\
+        \texttt{RBP + 8} & \texttt{addr\_rip} & \texttt{...EE} & Maintien de la boucle \\
         \hline
-        2 & RIP + 8 & \texttt{Adresse de "/bin/sh"} & Argument dépilé dans RDI \\
+        \texttt{RBP + 16} & \texttt{addr\_rbp + 16} & \texttt{Gadget POP RDI} & Charge RDI avec la valeur suivante \\
         \hline
-        3 & RIP + 16 & \texttt{Adresse de System} & Appel de la fonction \\
+        \texttt{RBP + 24} & \texttt{addr\_rbp + 24} & \texttt{Adresse Chaîne} & Argument (Pointeur vers RBP+40) \\
+        \hline
+        \texttt{RBP + 32} & \texttt{addr\_rbp + 32} & \texttt{Adresse System} & Appel de \texttt{system()} \\
+        \hline
+        \texttt{RBP + 40} & \texttt{addr\_rbp + 40} & \texttt{/bin/sh...} & Données brutes \\
         \hline
     \end{tabular}
     \caption{Organisation de la ROP Chain en mémoire}
 \end{table}
 
-\textbf{Justification de l'écriture en ordre inverse :}
-Nous devons écrire ces éléments en mémoire dans l'ordre inverse de leur position sur la pile (en commençant par RIP+16, puis RIP+8, et enfin RIP).
+\textbf{Justification de l'ordre d'écriture :}
+Le script Python itère sur ce dictionnaire et écrit chaque élément (découpé en blocs de 32 bits) tout en réécrivant systématiquement \texttt{0xEE} à l'adresse \texttt{addr\_rip} pour maintenir le programme en vie.
 
-\begin{enumerate}
-    \item \textbf{Maintien de la boucle d'exploitation :} L'adresse de retour actuelle (Saved RIP) contient l'adresse qui permet de relancer la fonction \texttt{makePing}. Si nous écrasons cette adresse dès le début par l'adresse du Gadget, la boucle se brise immédiatement.
-    \item \textbf{Prévention des crashs :} Si la boucle se brise et que le programme saute sur le Gadget alors que les arguments (situés plus haut, en RIP+8 et RIP+16) n'ont pas encore été écrits, le processeur dépilera des données invalides (des zéros ou des résidus de mémoire), provoquant un \textit{Segmentation Fault} avant l'ouverture du shell.
-    \item \textbf{Méthodologie :}
-        \begin{itemize}
-            \item \textbf{Étape 1 :} Écrire l'adresse de \texttt{system} en \textbf{RIP+16} (Mot 29). La boucle continue.
-            \item \textbf{Étape 2 :} Écrire l'adresse de la chaîne \texttt{"/bin/sh"} en \textbf{RIP+8} (Mot 28). La boucle continue.
-            \item \textbf{Étape 3 (Finale) :} Écraser le \textbf{Saved RIP} (Mot 27) avec l'adresse du Gadget. La boucle s'arrête, la chaîne ROP s'exécute.
-        \end{itemize}
-\end{enumerate}
+Une fois tous les éléments en place (Gadget, Pointeur, System, Chaîne), la dernière étape consiste à écraser le Saved RIP (\texttt{addr\_rip}) non plus avec \texttt{0xEE}, mais avec l'adresse d'un petit gadget \texttt{RET} (\texttt{addr\_ret}).
+Cela aura pour effet de "glisser" vers l'instruction suivante sur la pile (\texttt{RBP + 16}), déclenchant ainsi notre chaîne ROP.

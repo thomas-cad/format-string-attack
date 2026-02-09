@@ -14,21 +14,23 @@ Pour contourner la protection PIE (\textit{Position Independent Executable}), le
     \end{lstlisting}
     
     \item \textbf{Adresse de System ($System$)} : L'entrée de la fonction dans la PLT.
-    \item \textbf{Adresse du Gadget ($Gadget$)} : Nous avons identifié un "Universal Gadget" dans la fonction \texttt{\_\_libc\_csu\_init}.
+    \item \textbf{Adresse du Gadget ($Gadget_{POP}$)} : Nous avons identifié un "Universal Gadget" dans la fonction \texttt{\_\_libc\_csu\_init}.
+    \item \textbf{Adresse du Gadget RET ($Gadget_{RET}$)} : Nécessaire pour le déclenchement final de la chaîne (Trigger). Nous utilisons l'instruction \texttt{ret} présente à la fin de la fonction \texttt{main}.
 \end{itemize}
 
-\subsubsection{Analyse du Gadget "POP RDI" dans \texttt{\_\_libc\_csu\_init}}
+\subsubsection{Analyse des Gadgets}
 
-L'instruction explicite \texttt{pop rdi} n'est pas présente. Cependant, l'instruction \texttt{pop r15} située à la fin de la fonction d'initialisation permet de la simuler.
+\paragraph{Gadget "POP RDI" :}
+L'instruction explicite \texttt{pop rdi} n'est pas présente. Cependant, l'instruction \texttt{pop r15} (\code{41 5f}) située à la fin de la fonction d'initialisation permet de la simuler en sautant le premier octet.
+\[ Adresse_{POP} = 0x555555555562 + 1 = \textbf{0x555555555563} \]
 
-\begin{lstlisting}[language=bash, caption={Désassemblage partiel de \_\_libc\_csu\_init}]
-0x0000555555555562 <+98>:    pop    %r15
-0x0000555555555564 <+100>:   ret
+\paragraph{Gadget "RET" :}
+Le désassemblage de la fonction \texttt{main} montre une instruction \texttt{ret} à l'offset \texttt{+35}.
+\begin{lstlisting}[language=bash, basicstyle=\footnotesize\ttfamily]
+0x00005555555554f8 <+34>:    leave 
+0x00005555555554f9 <+35>:    ret       <-- GADGET RET
 \end{lstlisting}
-
-En code machine, \texttt{pop r15} est encodé par \code{41 5f}. L'instruction \texttt{pop rdi} correspond à l'opcode \code{5f}. En sautant le premier octet (offset +1), le processeur exécute \code{5f} (pop rdi) suivi de \code{c3} (ret).
-
-\[ Adresse_{Gadget} = 0x555555555562 + 1 = \textbf{0x555555555563} \]
+\[ Adresse_{RET} = \textbf{0x5555555554f9} \]
 
 \subsection{Tableau récapitulatif des adresses}
 
@@ -40,9 +42,11 @@ En code machine, \texttt{pop r15} est encodé par \code{41 5f}. L'instruction \t
         \hline
         Référence ($Ref$) & Adresse de retour (dans main) & \texttt{0x5555555554f3} \\ 
         \hline
-        Cible 1 ($Gadget$) & \texttt{pop rdi ; ret} (csu\_init) & \texttt{0x555555555563} \\ 
+        Cible 1 ($Gadget_{POP}$) & \texttt{pop rdi ; ret} (csu\_init) & \texttt{0x555555555563} \\ 
         \hline
         Cible 2 ($System$) & \texttt{system@plt} & \texttt{0x555555555100} \\ 
+        \hline
+        Cible 3 ($Gadget_{RET}$) & \texttt{ret} (fin de main) & \texttt{0x5555555554f9} \\ 
         \hline
     \end{tabular}
     \caption{Adresses relevées sous GDB}
@@ -52,15 +56,17 @@ En code machine, \texttt{pop r15} est encodé par \code{41 5f}. L'instruction \t
 
 Nous calculons la distance $\Delta$ à appliquer à l'adresse de retour ($Ref$) pour atteindre les cibles.
 
-\subsubsection{Distance vers le Gadget (POP RDI)}
-\[ \Delta_{Gadget} = Gadget - Ref \]
-\[ \Delta_{Gadget} = 0x555555555563 - 0x5555555554f3 = \textbf{+0x70} \]
+\subsubsection{Distance vers le Gadget POP RDI}
+\[ \Delta_{POP} = Gadget_{POP} - Ref \]
+\[ \Delta_{POP} = 0x555555555563 - 0x5555555554f3 = \textbf{+0x70} \]
+\textbf{Interprétation :} Le gadget se trouve exactement 112 octets après l'adresse de retour.
 
-\textbf{Interprétation :} Le gadget se trouve exactement 112 octets (0x70) après l'adresse de retour. 
-Cette distance est très faible ($< 256$). Cela confirme qu'il est possible d'atteindre ce gadget en modifiant uniquement l'\textbf{octet de poids faible (LSB)} de l'adresse de retour (remplacement de \code{0xf3} par \code{0x63} et ajustement éventuel du nibble précédent), validant la stratégie de l'attaque sans connaître l'adresse de base complète (ASLR).
+\subsubsection{Distance vers le Gadget RET}
+\[ \Delta_{RET} = Gadget_{RET} - Ref \]
+\[ \Delta_{RET} = 0x5555555554f9 - 0x5555555554f3 = \textbf{+0x6} \]
+\textbf{Interprétation :} L'instruction \texttt{ret} du \texttt{main} se situe seulement 6 octets après notre point de référence. C'est l'adresse que nous utiliserons lors de la dernière étape (Trigger) pour sauter vers notre ROP chain.
 
 \subsubsection{Distance vers System}
 \[ \Delta_{System} = System - Ref \]
 \[ \Delta_{System} = 0x555555555100 - 0x5555555554f3 = \textbf{-0x3F3} \]
-
-\textbf{Interprétation :} La fonction \texttt{system} se situe 1011 octets avant l'adresse de retour. Ce décalage constant sera utilisé dans le script d'exploitation pour calculer l'adresse réelle de \texttt{system} à partir de la fuite d'adresse (leak).
+\textbf{Interprétation :} La fonction \texttt{system} se situe 1011 octets avant l'adresse de retour. Ce décalage constant est utilisé pour calculer l'adresse réelle de \texttt{system} à l'exécution.

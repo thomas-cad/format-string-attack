@@ -1,18 +1,15 @@
 \section{Construction de la boucle d'exploitation}
 
-L'exploitation complète nécessite l'écriture de trois éléments distincts sur la pile (Gadget, Argument, Fonction System). Cependant, le buffer d'entrée est trop petit pour injecter la chaîne de format nécessaire à ces trois écritures simultanées.
+L'exploitation complète nécessite l'écriture de quatre éléments distincts sur la pile (Gadget, Pointeur, Fonction System, Chaîne brute). Le buffer d'entrée étant trop petit pour tout écrire en une fois, nous utilisons une \textbf{boucle d'exploitation}.
 
-Pour contourner cette limitation, nous mettons en place une \textbf{boucle d'exploitation}. Cette technique consiste à forcer le programme à ré-exécuter la fonction vulnérable \texttt{makePing} indéfiniment tant que notre charge utile n'est pas complète.
+Cette technique consiste à forcer le programme à ré-exécuter la fonction vulnérable \texttt{makePing} indéfiniment tant que notre charge utile n'est pas complète, en modifiant l'adresse de retour à chaque itération.
 
 \subsection{Mécanisme de réinvocation (LSB Overwrite)}
 
-Normalement, à la fin de la fonction \texttt{makePing}, l'instruction \texttt{ret} récupère l'adresse de retour (Saved RIP) sur la pile pour revenir à la fonction \texttt{main} et continuer l'exécution (instruction \texttt{mov \$0x0, \%eax}).
-
-Pour relancer \texttt{makePing}, nous devons modifier cette adresse de retour pour qu'elle pointe non pas vers l'instruction suivante, mais vers l'instruction d'appel (\texttt{call}) précédente.
+Normalement, l'instruction \texttt{ret} de \texttt{makePing} utilise l'adresse de retour (Saved RIP) pour revenir au \texttt{main}.
+Pour relancer \texttt{makePing}, nous modifions l'octet de poids faible (LSB) de cette adresse pour qu'elle pointe vers l'instruction \texttt{call} précédente.
 
 \subsubsection{Analyse des adresses dans le \texttt{main}}
-
-D'après notre analyse GDB précédente (Partie 3), voici le désassemblage autour de l'appel :
 
 \begin{lstlisting}[language=bash, basicstyle=\footnotesize\ttfamily, caption={Adresses autour de l'appel makePing}]
 0x00005555555554ee <+24>:    call   0x5555555553b3 <makePing>
@@ -20,45 +17,30 @@ D'après notre analyse GDB précédente (Partie 3), voici le désassemblage auto
 \end{lstlisting}
 
 \begin{itemize}
-    \item \textbf{Adresse actuelle sur la pile :} \texttt{...54\textbf{f3}} (Retour normal).
-    \item \textbf{Adresse cible pour boucler :} \texttt{...54\textbf{ee}} (Instruction \texttt{call makePing}).
+    \item \textbf{Adresse actuelle :} \texttt{...54\textbf{f3}}.
+    \item \textbf{Adresse cible (Boucle) :} \texttt{...54\textbf{ee}}.
 \end{itemize}
 
-Nous constatons que seule la fin de l'adresse change. La distance est de 5 octets ($0xF3 - 0xEE = 5$).
-
-\subsection{Justification de la technique "Partial Overwrite"}
-
-Pourquoi ne modifier que le dernier octet (LSB) ?
-
-\begin{enumerate}
-    \item \textbf{Contournement de PIE/ASLR :} Comme le programme est compilé en mode PIE (\textit{Position Independent Executable}), les adresses complètes (ex: \texttt{0x5555...}) changent à chaque exécution. Cependant, les pages mémoire étant alignées sur 4 Ko (0x1000), les 12 bits de poids faible (les 3 derniers chiffres hexadécimaux) restent constants relativement au début de la page.
-    \item \textbf{Stabilité :} L'octet de poids faible de l'instruction \texttt{call} sera toujours \texttt{0xee}, quelle que soit l'adresse de base choisie par le système.
-    \item \textbf{Mise en œuvre :} En utilisant le spécificateur de format \texttt{\%hhn}, nous pouvons écraser uniquement le dernier octet de l'adresse de retour sans toucher aux octets supérieurs randomisés qui restent valides.
-\end{enumerate}
+La différence ne réside que dans le dernier octet. En remplaçant \texttt{0xf3} par \texttt{0xee} via le spécificateur \texttt{\%hhn}, nous forçons le programme à sauter sur l'instruction \texttt{call}, relançant ainsi la fonction vulnérable.
 
 \subsection{Algorithme de la boucle d'attaque}
 
-La stratégie consiste à envoyer plusieurs payloads successifs. À chaque itération (sauf la dernière), nous restaurons la boucle.
+Le script d'exploitation itère sur les éléments de la ROP chain pour les écrire en mémoire 32 bits par 32 bits (MSB/LSB).
 
 \begin{enumerate}
-    \item \textbf{Itération 1 (Préparation System) :}
+    \item \textbf{Phase d'écriture (Boucle active) :}
+    Pour chaque adresse de la ROP chain (\texttt{RBP+16}, \texttt{RBP+24}, etc.) :
     \begin{itemize}
-        \item Écrire l'adresse de \texttt{system} plus haut sur la pile (Offset RIP+16).
-        \item Écraser le LSB du Saved RIP (actuellement \texttt{0xf3}) avec \texttt{\textbf{0xee}}.
-        \item \textbf{Résultat :} Au \texttt{ret}, le programme saute sur \texttt{call makePing}. La fonction redémarre.
+        \item Nous envoyons un payload qui écrit 4 octets de données à l'adresse cible.
+        \item Dans le \textbf{même payload}, nous écrivons la valeur \texttt{0xee} sur le LSB du Saved RIP (\texttt{RBP+8}).
+        \item \textbf{Résultat :} La donnée est écrite, et la fonction redémarre au lieu de quitter.
     \end{itemize}
 
-    \item \textbf{Itération 2 (Préparation "/bin/sh") :}
+    \item \textbf{Phase de déclenchement (Trigger) :}
+    Une fois la chaîne ROP complète (Gadget, Argument, System, Chaîne) écrite aux adresses supérieures, il faut briser la boucle.
     \begin{itemize}
-        \item Écrire l'adresse de la chaîne \texttt{"/bin/sh"} sur la pile (Offset RIP+8).
-        \item Écraser à nouveau le LSB du Saved RIP avec \texttt{\textbf{0xee}}.
-        \item \textbf{Résultat :} La fonction redémarre encore une fois.
-    \end{itemize}
-
-    \item \textbf{Itération 3 (Déclenchement ROP) :}
-    \begin{itemize}
-        \item Cette fois, nous n'écrivons pas \texttt{0xee}.
-        \item Nous écrasons le Saved RIP entier (ou son LSB et le suivant) par l'adresse du gadget \texttt{pop rdi ; ret} (dont le LSB est \texttt{0x63}).
-        \item \textbf{Résultat :} Au \texttt{ret}, le programme saute sur le gadget. RDI est chargé avec l'argument, puis \texttt{system} est appelé.
+        \item Nous envoyons un dernier payload.
+        \item Cette fois, nous n'écrivons pas \texttt{0xee} (adresse du \texttt{call}), mais \texttt{\textbf{0xf9}} (adresse du gadget \texttt{ret} situé à la fin du main).
+        \item \textbf{Résultat :} Au retour de \texttt{makePing}, le processeur saute sur le \texttt{ret} du \texttt{main}. Ce \texttt{ret} dépile la valeur suivante sur la pile (située à \texttt{RBP+16}), qui est notre gadget \texttt{POP RDI}. La chaîne ROP s'exécute.
     \end{itemize}
 \end{enumerate}
