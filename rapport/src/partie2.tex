@@ -1,0 +1,73 @@
+\section{Extraction d’informations à l’aide d’un débogueur}
+
+L'exploitation d'une vulnérabilité binaire, et plus particulièrement la construction d'une chaîne ROP, nécessite une cartographie précise de la mémoire. L'utilisation du débogueur \texttt{GDB} nous permet d'analyser l'état de la pile et des registres en temps réel.
+
+\subsection{Session de débogage et collecte de données}
+
+Nous avons exécuté le programme vulnérable sous \texttt{GDB} en injectant une chaîne de format spécifique pour inspecter le 7\up{ème} et le 27\up{ème} mot de la pile.
+
+\textbf{Commande GDB utilisée :} \code{run} puis injection de \code{AAAAAAAA \%7\$p \%27\$p}.
+
+\begin{lstlisting}[caption={Sortie GDB montrant l'état de la pile}, language=bash]
+(gdb) run
+Starting program: /home/thomas/work/devoir2026/vuln 
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+Checking ping is on the system...
+/usr/bin/ping
+Please Insert an IP address to ping: 
+AAAAAAAA %7$p %27$p
+AAAAAAAA 0x7fffffffdc38 0x5555555554f3
+[Detaching after vfork from child process 745608]
+ping: %27: Name or service not known
+\end{lstlisting}
+
+\subsection{Analyse des données exfiltrées}
+
+L'architecture x86\_64 utilise les registres \texttt{RDI, RSI, RDX, RCX, R8, R9} pour les 6 premiers arguments. Les arguments suivants sont placés sur la pile. Le spécificateur \texttt{\%7\$p} pointe donc vers la première valeur disponible au sommet de la pile (\texttt{RSP}) au moment de l'appel à \texttt{printf}.
+
+\subsubsection{Analyse du Mot n°7 : \texttt{0x7fffffffdc38}}
+La valeur obtenue est \texttt{0x7fffffffdc38}.
+\begin{itemize}
+    \item \textbf{Observation :} Il s'agit d'une adresse de la pile (commençant par \texttt{0x7fff...}).
+    \item \textbf{Interprétation :} Contrairement à une exécution où l'on verrait \texttt{0x41414141} (la valeur hexadécimale de "AAAA"), nous voyons ici un pointeur. Cela indique que le sommet de la pile à cet instant contient une adresse pointant vers une zone de la stack (probablement une variable locale ou le buffer lui-même).
+    \item \textbf{Rôle dans l'attaque :} C'est un point d'ancrage essentiel. Si nous utilisons le spécificateur \texttt{\%7\$n} (écriture), nous écrirons à l'adresse \texttt{0x7fffffffdc38}.
+\end{itemize}
+
+\subsubsection{Analyse du Mot n°27 : \texttt{0x5555555554f3}}
+La valeur obtenue est \texttt{0x5555555554f3}.
+\begin{itemize}
+    \item \textbf{Observation :} Il s'agit d'une adresse du segment de code (\texttt{.text}), typique d'un exécutable position-indépendant (PIE activé).
+    \item \textbf{Identification (Saved RIP) :} Cette adresse correspond à l'\textbf{adresse de retour} de la fonction vulnérable vers la fonction \texttt{main}.
+    \item \textbf{Preuve par le calcul :} Le script d'exploitation indique que l'adresse de retour cible (le début de l'instruction après l'appel) se termine par l'octet \texttt{0xee}.
+    \[ 0x54f3 - 0x5 = 0x54ee \]
+    L'adresse obtenue dans GDB (\texttt{...54f3}) est située exactement 5 octets après l'adresse cible mentionnée dans l'énoncé. Cela confirme que \texttt{0x5555555554f3} est bien l'adresse de l'instruction suivant immédiatement l'appel à \texttt{makePing} dans le \texttt{main}.
+\end{itemize}
+
+\subsection{Organisation de la pile (Stack Mapping)}
+
+Nous pouvons reconstituer l'état de la mémoire lors de la vulnérabilité :
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{|c|c|l|l|}
+        \hline
+        \textbf{Offset printf} & \textbf{Adresse (Exemple)} & \textbf{Contenu} & \textbf{Description} \\
+        \hline
+        \textbf{\%7\$p} & \texttt{0x7fffffffdc38} & Pointeur Stack & Sommet de la pile (RSP) \\
+        \hline
+        ... & ... & ... & Variables locales et Padding \\
+        \hline
+        ... & ... & Saved RBP & Sauvegarde du pointeur de base \\
+        \hline
+        \textbf{\%27\$p} & \texttt{0x5555555554f3} & \textbf{Saved RIP} & \textbf{Adresse de retour vers main} \\
+        \hline
+        \%28\$p & ... & ... & Zone stable pour stocker "/bin/sh" \\
+        \hline
+    \end{tabular}
+    \caption{Organisation de la pile lors de l'appel à printf}
+    \label{tab:stack_mapping}
+\end{table}
+
+\paragraph{Conclusion de l'analyse dynamique :}
+Nous avons identifié l'emplacement de l'adresse de retour (Offset 27). La distance entre le sommet de la pile (Offset 7) et l'adresse de retour est de 20 "mots" machine (soit $20 \times 8 = 160$ octets). Ces informations sont suffisantes pour calculer les distances nécessaires à la construction de la chaîne ROP.

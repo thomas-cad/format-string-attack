@@ -1,0 +1,105 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Encodage et Langue ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+
+% --- Mise en page et Graphismes ---
+\usepackage{geometry}
+\geometry{hmargin=2.5cm, vmargin=2.5cm}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{eso-pic}     % Pour le logo en haut à droite
+\usepackage{parskip}    % Espace automatique entre les paragraphes
+\usepackage{microtype}  % Améliore la typographie
+
+% --- Listes et Liens ---
+\usepackage{enumitem}   % Pour l'espacement des listes
+\setlist[itemize]{itemsep=4pt, topsep=4pt}
+\usepackage[hidelinks]{hyperref}
+
+% --- Code et Coloration ---
+\usepackage{listings}
+\usepackage{xcolor}
+
+% --- Palette de couleurs "Modern Coding" ---
+\definecolor{codebg}{rgb}{0.98, 0.98, 1.0}
+\definecolor{keywordblue}{HTML}{005CC5}    % Commandes
+\definecolor{parameterorange}{HTML}{E36209} % Options (-)
+\definecolor{stringgreen}{HTML}{22863A}    % Chemins et textes
+\definecolor{commentgray}{HTML}{6A737D}    % Commentaires
+\definecolor{bordergray}{HTML}{E1E4E8}     % Bordures
+
+% --- Configuration de listings (Coloré + Numéroté) ---
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small\color{black},
+    breaklines=true,
+    columns=fullflexible,
+    showstringspaces=false,
+    % Numérotation
+    numbers=left,
+    numberstyle=\tiny\color{commentgray},
+    stepnumber=1,
+    numbersep=10pt,
+    % Bordures et Marges
+    frame=single,
+    frameround=tttt,
+    rulecolor=\color{bordergray},
+    framesep=6pt,
+    xleftmargin=20pt,
+    % Styles
+    keywordstyle=\color{keywordblue}\bfseries,
+    commentstyle=\color{commentgray}\itshape,
+    stringstyle=\color{stringgreen},
+    % Mots-clés OpenSSL
+    morekeywords={openssl, genpkey, genrsa, req, x509, ca, pkcs12, s_client, s_server},
+    % Paramètres et options
+    literate={-}{{\textcolor{parameterorange}{-}}}1
+             {=}{{\textcolor{keywordblue}{=}}}1,
+    emph={algorithm, pkeyopt, out, key, days, subj, config, extensions, in, export, inkey, certfile, name, connect, CAfile},
+    emphstyle=\color{parameterorange}
+}
+
+% --- Commande perso pour le code en ligne ---
+\newcommand{\code}[1]{\texttt{\small\colorbox{codebg}{\textcolor{black}{#1}}}}
+
+% --- Informations du document ---
+\title{
+    \vspace{1.5cm}
+    \Huge \textbf{Exploitation des chaînes de format (Format String)}\\[1ex]
+    \large CSC\_4CS03\_TP - Cyberattaques : menaces et mises en œuvre}
+\author{\textbf{Thomas Cadegros, Yahya Moustahsane}}
+\date{Février 2026}
+
+\begin{document}
+
+% --- Logo ---
+\AddToShipoutPicture*{
+    \put(450,700){\includegraphics[height=3.5cm]{src/image/logo_tp.png}}
+}
+
+\maketitle
+\vspace{1cm}
+
+\tableofcontents
+
+\vspace{1cm}
+\begin{center}
+    \rule{0.5\linewidth}{0.5pt} \\
+    \vspace{0.3cm}
+    \small \textbf{Code Source et Ressources} \\
+    Les fichiers, les scripts utilisés lors de ce TP sont disponibles sur le dépôt GitHub suivant : \\
+    \href{https://github.com/thomas-cad/tp-pki}{\texttt{https://github.com/thomas-cad/.....}} \\
+    \rule{0.5\linewidth}{0.5pt}
+\end{center}
+\vspace{1cm}
+
+\input{src/partie1}
+\input{src/partie2}
+\input{src/partie3}
+\input{src/partie4}
+\input{src/partie5}
+
+\end{document}
