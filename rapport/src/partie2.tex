@@ -4,49 +4,48 @@ L'exploitation d'une vulnérabilité binaire, et plus particulièrement la const
 
 \subsection{Session de débogage et collecte de données}
 
-Nous avons exécuté le programme vulnérable sous \texttt{GDB} en injectant une chaîne de format spécifique pour inspecter le 7\up{ème} et le 27\up{ème} mot de la pile.
+Pour déterminer l'emplacement exact de notre buffer et de l'adresse de retour, nous avons exécuté le programme vulnérable sous \texttt{GDB} en injectant un motif reconnaissable (\texttt{AAAA}) suivi de plusieurs offsets stratégiques (7, 16, 26 et 27).
 
-\textbf{Commande GDB utilisée :} \code{run} puis injection de \code{AAAAAAAA \%7\$p \%27\$p}.
+\textbf{Commande GDB utilisée :} \code{run} puis injection de : \\
+\code{AAAA | Off7=\%7\$p | Off16=\%16\$p | Off26=\%26\$p | Off27=\%27\$p}
 
 \begin{lstlisting}[caption={Sortie GDB montrant l'état de la pile}, language=bash]
 (gdb) run
 Starting program: /home/thomas/work/devoir2026/vuln 
-[Thread debugging using libthread_db enabled]
-Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+...
 Checking ping is on the system...
 /usr/bin/ping
 Please Insert an IP address to ping: 
-AAAAAAAA %7$p %27$p
-AAAAAAAA 0x7fffffffdc38 0x5555555554f3
-[Detaching after vfork from child process 745608]
-ping: %27: Name or service not known
+AAAA | Off7=%7$p | Off16=%16$p | Off26=%26$p | Off27=%27$p
+AAAA | Off7=0x7fffffffdcc8 | Off16=0x4f207c2041414141 | Off26=0x7fffffffdce0 | Off27=0x5555555554f3
+[Detaching after vfork from child process ...]
 \end{lstlisting}
 
 \subsection{Analyse des données exfiltrées}
 
-L'architecture x86\_64 utilise les registres \texttt{RDI, RSI, RDX, RCX, R8, R9} pour les 6 premiers arguments. Les arguments suivants sont placés sur la pile. Le spécificateur \texttt{\%7\$p} pointe donc vers la première valeur disponible au sommet de la pile (\texttt{RSP}) au moment de l'appel à \texttt{printf}.
+L'architecture x86\_64 place les premiers arguments dans les registres. Les suivants sont sur la pile. L'analyse des valeurs retournées nous permet de situer notre entrée utilisateur.
 
-\subsubsection{Analyse du Mot n°7 : \texttt{0x7fffffffdc38}}
-La valeur obtenue est \texttt{0x7fffffffdc38}.
+\subsubsection{Analyse du Mot n°16 : \texttt{0x...41414141}}
+La valeur obtenue à l'offset 16 est \texttt{0x4f207c2041414141}.
 \begin{itemize}
-    \item \textbf{Observation :} Il s'agit d'une adresse de la pile (commençant par \texttt{0x7fff...}).
-    \item \textbf{Interprétation :} Contrairement à une exécution où l'on verrait \texttt{0x41414141} (la valeur hexadécimale de "AAAA"), nous voyons ici un pointeur. Cela indique que le sommet de la pile à cet instant contient une adresse pointant vers une zone de la stack (probablement une variable locale ou le buffer lui-même).
-    \item \textbf{Rôle dans l'attaque :} C'est un point d'ancrage essentiel. Si nous utilisons le spécificateur \texttt{\%7\$n} (écriture), nous écrirons à l'adresse \texttt{0x7fffffffdc38}.
+    \item \textbf{Observation :} Les 4 octets de poids faible (Little Endian) sont \texttt{0x41414141}.
+    \item \textbf{Interprétation :} Cela correspond au code ASCII de "AAAA". 
+    \item \textbf{Conclusion :} Contrairement à l'offset 7 (qui est simplement le sommet de la pile \texttt{RSP}), notre buffer d'entrée commence réellement à l'\textbf{offset 16}. C'est notre point de référence (Offset 0 de notre payload).
 \end{itemize}
 
 \subsubsection{Analyse du Mot n°27 : \texttt{0x5555555554f3}}
 La valeur obtenue est \texttt{0x5555555554f3}.
 \begin{itemize}
     \item \textbf{Observation :} Il s'agit d'une adresse du segment de code (\texttt{.text}), typique d'un exécutable position-indépendant (PIE activé).
-    \item \textbf{Identification (Saved RIP) :} Cette adresse correspond à l'\textbf{adresse de retour} de la fonction vulnérable vers la fonction \texttt{main}.
-    \item \textbf{Preuve par le calcul :} Le script d'exploitation indique que l'adresse de retour cible (le début de l'instruction après l'appel) se termine par l'octet \texttt{0xee}.
+    \item \textbf{Identification (Saved RIP) :} Cette adresse correspond à l'\textbf{adresse de retour} vers la fonction \texttt{main}.
+    \item \textbf{Preuve par le calcul :} Le désassemblage montre que l'appel à \texttt{makePing} se termine à l'adresse \texttt{...54ee}.
     \[ 0x54f3 - 0x5 = 0x54ee \]
-    L'adresse obtenue dans GDB (\texttt{...54f3}) est située exactement 5 octets après l'adresse cible mentionnée dans l'énoncé. Cela confirme que \texttt{0x5555555554f3} est bien l'adresse de l'instruction suivant immédiatement l'appel à \texttt{makePing} dans le \texttt{main}.
+    L'adresse obtenue dans GDB correspond exactement à l'instruction suivant l'appel. C'est la valeur que nous devrons écraser pour détourner le flux d'exécution.
 \end{itemize}
 
 \subsection{Organisation de la pile (Stack Mapping)}
 
-Nous pouvons reconstituer l'état de la mémoire lors de la vulnérabilité :
+Grâce à ces nouvelles données, nous pouvons reconstituer la cartographie exacte de la pile :
 
 \begin{table}[H]
     \centering
@@ -54,20 +53,31 @@ Nous pouvons reconstituer l'état de la mémoire lors de la vulnérabilité :
         \hline
         \textbf{Offset printf} & \textbf{Adresse (Exemple)} & \textbf{Contenu} & \textbf{Description} \\
         \hline
-        \textbf{\%7\$p} & \texttt{0x7fffffffdc38} & Pointeur Stack & Sommet de la pile (RSP) \\
+        \%7\$p & \texttt{0x7fffffffdcc8} & Stack Pointer & Sommet de la pile (RSP) \\
         \hline
-        ... & ... & ... & Variables locales et Padding \\
+        ... & ... & ... & Padding et variables locales \\
         \hline
-        ... & ... & Saved RBP & Sauvegarde du pointeur de base \\
+        \textbf{\%16\$p} & \texttt{0x41414141} & \textbf{Buffer Start} & \textbf{Début de notre payload} \\
         \hline
-        \textbf{\%27\$p} & \texttt{0x5555555554f3} & \textbf{Saved RIP} & \textbf{Adresse de retour vers main} \\
+        ... & ... & ... & Données utilisateur \\
         \hline
-        \%28\$p & ... & ... & Zone stable pour stocker "/bin/sh" \\
+        \textbf{\%26\$p} & \texttt{0x7fffffffdce0} & \textbf{Saved RBP} & Pointeur de base sauvegardé \\
+        \hline
+        \textbf{\%27\$p} & \texttt{0x5555555554f3} & \textbf{Saved RIP} & Adresse de retour vers main \\
         \hline
     \end{tabular}
-    \caption{Organisation de la pile lors de l'appel à printf}
+    \caption{Organisation de la pile validée par GDB}
     \label{tab:stack_mapping}
 \end{table}
 
-\paragraph{Conclusion de l'analyse dynamique :}
-Nous avons identifié l'emplacement de l'adresse de retour (Offset 27). La distance entre le sommet de la pile (Offset 7) et l'adresse de retour est de 20 "mots" machine (soit $20 \times 8 = 160$ octets). Ces informations sont suffisantes pour calculer les distances nécessaires à la construction de la chaîne ROP.
+\paragraph{Calcul des distances critiques :}
+Pour atteindre nos cibles depuis le début de notre buffer (Offset 16), nous devons traverser :
+
+\begin{itemize}
+    \item \textbf{Vers Saved RBP (Offset 26) :} $26 - 16 = 10$ mots.
+    \[ 10 \times 8 \mathrm{ octets} = \mathbf{80 \mathrm{ octets}} \]
+    (Correspond à la variable \texttt{dist\_buffer\_rbp} du script).
+    
+    \item \textbf{Vers Saved RIP (Offset 27) :} $27 - 16 = 11$ mots.
+    \[ 11 \times 8 \mathrm{ octets} = \mathbf{88 \mathrm{ octets}} \]
+\end{itemize}

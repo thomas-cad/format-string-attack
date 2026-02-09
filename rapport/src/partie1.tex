@@ -2,24 +2,24 @@
 
 \subsection{Test de détection de la vulnérabilité}
 
-Pour identifier la faille, nous avons exécuté le programme en fournissant une chaîne de caractères contenant des spécificateurs de format. Si le programme est vulnérable, il interprétera ces spécificateurs au lieu de les afficher littéralement.
+Pour identifier la faille et localiser notre buffer d'entrée sur la pile, nous avons exécuté le programme en fournissant une chaîne contenant un motif reconnaissable (AAAA) suivi d'une demande d'accès direct à un index éloigné sur la pile, correspondant à notre analyse dynamique.
 
-Nous avons utilisé le payload suivant : \code{AAAA \%p \%p \%p \%p \%p}.
+Nous avons utilisé le payload suivant : \code{AAAA \%16\$p}.
 \begin{itemize}
-    \item \code{AAAA} : Sert de motif reconnaissable (0x41414141) pour repérer notre buffer sur la pile.
-    \item \code{\%p} : Spécificateur de format demandant l'affichage d'un pointeur (adresse mémoire) situé sur la pile.
+    \item \code{AAAA} : Motif reconnaissable (0x41414141) pour repérer notre buffer sur la pile.
+    \item \code{\%16\$p} : Demande d'afficher directement la 16\ieme{} valeur sur la pile.
 \end{itemize}
 
 Voici le résultat de l'exécution dans notre environnement de test :
 
-\begin{lstlisting}[caption={Test d'injection de chaînes de format}, language=bash]
-thomas@zephyrus:~/work/devoir2026$ ./vuln 
+\begin{lstlisting}[caption={Test d'injection confirmant l'offset}, language=bash]
+thomas@zephyrus:~/work/devoir2026$ ./vuln
 Checking ping is on the system...
 /usr/bin/ping
-Please Insert an IP address to ping: 
-AAAA %p %p %p %p %p
-AAAA 0x5acad81676b1 0xfbad2288 0x7e170491ba91 0x5acad81676c4 0x410
-ping: %p: Name or service not known
+Please Insert an IP address to ping:
+AAAA %16$p
+AAAA 0x41414141
+ping: AAAA: Name or service not known
 \end{lstlisting}
 
 \subsection{Interprétation des résultats}
@@ -28,12 +28,12 @@ L'analyse de la sortie confirme la présence de la vulnérabilité :
 
 \begin{enumerate}
     \item \textbf{Interprétation des formats :} Le programme n'a pas affiché la chaîne littérale \texttt{"\%p \%p..."}. À la place, il a affiché des valeurs hexadécimales (\texttt{0x5acad81676b1}, \texttt{0xfbad2288}, etc.).
-    \item \textbf{Fuite de mémoire (Exfiltration) :} Ces valeurs hexadécimales correspondent au contenu de la pile (Stack) au moment de l'appel à la fonction d'affichage. Comme expliqué dans le cours, la fonction \texttt{printf} (ou famille) dépile les arguments correspondants aux spécificateurs \texttt{\%p} même s'ils n'ont pas été fournis par le programmeur.
+    \item \textbf{Fuite de mémoire (Exfiltration) :} Ces valeurs hexadécimales correspondent au contenu de la pile (Stack) au moment de l'appel à la fonction d'affichage.
 \end{enumerate}
 
 \subsection{Nature exacte de la vulnérabilité}
 
-La vulnérabilité détectée est une \textbf{Format String Vulnerability} (CWE-134).
+La vulnérabilité détectée est une \textbf{Format String Vulnerability}
 
 \paragraph{Justification théorique :}
 En langage C, les fonctions d'affichage formaté comme \texttt{printf} attendent une chaîne de format suivie d'arguments optionnels. Une implémentation sécurisée devrait être :
