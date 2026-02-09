@@ -1,0 +1,64 @@
+\section{Construction de la boucle d'exploitation}
+
+L'exploitation complète nécessite l'écriture de trois éléments distincts sur la pile (Gadget, Argument, Fonction System). Cependant, le buffer d'entrée est trop petit pour injecter la chaîne de format nécessaire à ces trois écritures simultanées.
+
+Pour contourner cette limitation, nous mettons en place une \textbf{boucle d'exploitation}. Cette technique consiste à forcer le programme à ré-exécuter la fonction vulnérable \texttt{makePing} indéfiniment tant que notre charge utile n'est pas complète.
+
+\subsection{Mécanisme de réinvocation (LSB Overwrite)}
+
+Normalement, à la fin de la fonction \texttt{makePing}, l'instruction \texttt{ret} récupère l'adresse de retour (Saved RIP) sur la pile pour revenir à la fonction \texttt{main} et continuer l'exécution (instruction \texttt{mov \$0x0, \%eax}).
+
+Pour relancer \texttt{makePing}, nous devons modifier cette adresse de retour pour qu'elle pointe non pas vers l'instruction suivante, mais vers l'instruction d'appel (\texttt{call}) précédente.
+
+\subsubsection{Analyse des adresses dans le \texttt{main}}
+
+D'après notre analyse GDB précédente (Partie 3), voici le désassemblage autour de l'appel :
+
+\begin{lstlisting}[language=bash, basicstyle=\footnotesize\ttfamily, caption={Adresses autour de l'appel makePing}]
+0x00005555555554ee <+24>:    call   0x5555555553b3 <makePing>
+0x00005555555554f3 <+29>:    mov    $0x0,%eax  <-- Saved RIP actuel
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{Adresse actuelle sur la pile :} \texttt{...54\textbf{f3}} (Retour normal).
+    \item \textbf{Adresse cible pour boucler :} \texttt{...54\textbf{ee}} (Instruction \texttt{call makePing}).
+\end{itemize}
+
+Nous constatons que seule la fin de l'adresse change. La distance est de 5 octets ($0xF3 - 0xEE = 5$).
+
+\subsection{Justification de la technique "Partial Overwrite"}
+
+Pourquoi ne modifier que le dernier octet (LSB) ?
+
+\begin{enumerate}
+    \item \textbf{Contournement de PIE/ASLR :} Comme le programme est compilé en mode PIE (\textit{Position Independent Executable}), les adresses complètes (ex: \texttt{0x5555...}) changent à chaque exécution. Cependant, les pages mémoire étant alignées sur 4 Ko (0x1000), les 12 bits de poids faible (les 3 derniers chiffres hexadécimaux) restent constants relativement au début de la page.
+    \item \textbf{Stabilité :} L'octet de poids faible de l'instruction \texttt{call} sera toujours \texttt{0xee}, quelle que soit l'adresse de base choisie par le système.
+    \item \textbf{Mise en œuvre :} En utilisant le spécificateur de format \texttt{\%hhn}, nous pouvons écraser uniquement le dernier octet de l'adresse de retour sans toucher aux octets supérieurs randomisés qui restent valides.
+\end{enumerate}
+
+\subsection{Algorithme de la boucle d'attaque}
+
+La stratégie consiste à envoyer plusieurs payloads successifs. À chaque itération (sauf la dernière), nous restaurons la boucle.
+
+\begin{enumerate}
+    \item \textbf{Itération 1 (Préparation System) :}
+    \begin{itemize}
+        \item Écrire l'adresse de \texttt{system} plus haut sur la pile (Offset RIP+16).
+        \item Écraser le LSB du Saved RIP (actuellement \texttt{0xf3}) avec \texttt{\textbf{0xee}}.
+        \item \textbf{Résultat :} Au \texttt{ret}, le programme saute sur \texttt{call makePing}. La fonction redémarre.
+    \end{itemize}
+
+    \item \textbf{Itération 2 (Préparation "/bin/sh") :}
+    \begin{itemize}
+        \item Écrire l'adresse de la chaîne \texttt{"/bin/sh"} sur la pile (Offset RIP+8).
+        \item Écraser à nouveau le LSB du Saved RIP avec \texttt{\textbf{0xee}}.
+        \item \textbf{Résultat :} La fonction redémarre encore une fois.
+    \end{itemize}
+
+    \item \textbf{Itération 3 (Déclenchement ROP) :}
+    \begin{itemize}
+        \item Cette fois, nous n'écrivons pas \texttt{0xee}.
+        \item Nous écrasons le Saved RIP entier (ou son LSB et le suivant) par l'adresse du gadget \texttt{pop rdi ; ret} (dont le LSB est \texttt{0x63}).
+        \item \textbf{Résultat :} Au \texttt{ret}, le programme saute sur le gadget. RDI est chargé avec l'argument, puis \texttt{system} est appelé.
+    \end{itemize}
+\end{enumerate}
