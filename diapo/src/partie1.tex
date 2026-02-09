@@ -35,7 +35,7 @@ L'analyse de la sortie confirme la présence de la vulnérabilité :
 
 La vulnérabilité détectée est une \textbf{Format String Vulnerability} (CWE-134).
 
-\paragraph{Justification théorique :}
+\textbf{Justification théorique :}
 En langage C, les fonctions d'affichage formaté comme \texttt{printf} attendent une chaîne de format suivie d'arguments optionnels. Une implémentation sécurisée devrait être :
 \begin{lstlisting}[language=C]
 printf("%s", user_input);

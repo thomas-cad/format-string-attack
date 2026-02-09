@@ -69,5 +69,5 @@ Nous pouvons reconstituer l'état de la mémoire lors de la vulnérabilité :
     \label{tab:stack_mapping}
 \end{table}
 
-\paragraph{Conclusion de l'analyse dynamique :}
+\textbf{Conclusion de l'analyse dynamique :}
 Nous avons identifié l'emplacement de l'adresse de retour (Offset 27). La distance entre le sommet de la pile (Offset 7) et l'adresse de retour est de 20 "mots" machine (soit $20 \times 8 = 160$ octets). Ces informations sont suffisantes pour calculer les distances nécessaires à la construction de la chaîne ROP.
