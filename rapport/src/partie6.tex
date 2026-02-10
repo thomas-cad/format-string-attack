@@ -1,0 +1,86 @@
+\section{Modification finale de l'adresse de retour et obtention du Shell}
+
+La dernière étape de l'exploitation consiste à briser la boucle de réinvocation pour rediriger le flux d'exécution vers notre chaîne ROP, que nous avons méticuleusement inscrite sur la pile lors des étapes précédentes.
+
+\subsection{Stratégie de déclenchement : Le "Stack Pivot" via un Gadget RET}
+
+Contrairement aux itérations précédentes où nous écrasions le LSB de l'adresse de retour avec \code{0xee} pour viser l'instruction \code{call}, nous ciblons cette fois un gadget \code{ret} situé à la toute fin de la fonction \code{main}.
+
+\subsubsection{Justification du choix du Gadget RET}
+D'après l'analyse dynamique et les logs du script :
+\begin{itemize}
+    \item L'adresse de retour originale (Saved RIP) se termine par \code{0xf3}.
+    \item Le gadget \code{ret} identifié dans le \code{main} se termine par \code{0xf9}.
+\end{itemize}
+
+L'utilisation de ce gadget intermédiaire est indispensable pour deux raisons :
+\begin{enumerate}
+    \item \textbf{Alignement de la pile (Stack Alignment) :} L'architecture x86\_64 impose que la pile soit alignée sur 16 octets lors de l'appel à certaines fonctions de la GLIBC.
+    \item \textbf{Mécanisme de "Glissement" :} Le gadget \code{ret} effectue l'opération \code{pop rip}. Il va donc dépiler la valeur suivante sur la pile et sauter dessus. Or, nous avons écrit le début de notre chaîne ROP (le gadget \code{pop rdi}) juste au-dessus de l'adresse de retour (à \code{RBP+16}).
+\end{enumerate}
+
+\subsection{La technique du "LSB Overwrite"}
+
+Pour effectuer cette redirection, nous utilisons une modification partielle de l'adresse de retour.
+
+\textbf{Contrainte PIE (Position Independent Executable) :}
+Le programme étant compilé avec PIE, l'adresse complète des instructions change à chaque exécution (ASLR). Cependant, la mémoire est gérée par pages de 4 Ko ($2^{12} = 4096$ octets). Cela implique que les 12 bits de poids faible (les 3 derniers chiffres hexadécimaux) restent constants relativement au début de la page.
+
+Dans notre cas d'exécution :
+\begin{itemize}
+    \item Adresse Saved RIP actuelle : \code{0x5f51361d14\textbf{f3}}
+    \item Adresse Gadget RET cible : \code{0x5f51361d14\textbf{f9}}
+\end{itemize}
+
+La différence ne réside que dans le dernier octet. Il est donc inutile de connaître l'adresse de base aléatoire. Il suffit d'écraser le dernier octet \code{0xf3} par \code{0xf9} pour réussir le détournement de manière fiable à 100\%.
+
+\subsection{Charge utile finale (Trigger)}
+
+Le payload final injecté par le script est construit ainsi :
+
+\[ \text{Payload} = \text{"\%249c\%7\\\$hhn"} \]
+
+\begin{itemize}
+    \item \textbf{\%249c} : Le script calcule \code{addr\_ret \& 0xff}, ce qui donne \code{0xf9} (soit 249 en décimal). La fonction \code{printf} affiche donc 249 caractères de bourrage pour ajuster son compteur interne.
+    \item \textbf{\%7\$} : Nous sélectionnons le 7\textsuperscript{e} argument sur la pile, qui correspond au pointeur vers le Saved RIP (identifié en section 2).
+    \item \textbf{hhn} : Le spécificateur \code{n} écrit le nombre de caractères affichés (249) à l'adresse pointée. Le modificateur \code{hh} assure que l'écriture se fait sur \textbf{un seul octet}.
+\end{itemize}
+
+\subsection{Séquence d'exécution finale}
+
+Au moment où le dernier \code{printf} s'exécute, voici l'enchaînement qui mène au shell :
+
+
+
+\begin{enumerate}
+    \item \textbf{Écriture :} Le LSB du Saved RIP passe de \code{0xf3} à \code{0xf9}.
+    \item \textbf{Retour de makePing :} L'instruction \code{ret} finale de \code{makePing} dépile \code{0x...14f9} et saute dessus.
+    \item \textbf{Gadget RET :} Le processeur exécute le \code{ret} du \code{main}. Il dépile la valeur suivante (située à \code{RBP+16}).
+    \item \textbf{Chaîne ROP :} La valeur dépilée est l'adresse de \code{pop rdi ; ret} (\code{0x...1563}).
+    \item \textbf{Chargement Argument :} \code{RDI} est chargé avec l'adresse de la chaîne \code{"/bin/sh"} (\code{0x...57e8}).
+    \item \textbf{Appel Système :} L'instruction suivante est l'adresse de \code{system()} (\code{0x...1100}). Le shell s'ouvre.
+\end{enumerate}
+
+\subsection{Démonstration de l'obtention du Shell}
+
+L'exécution du script d'exploitation confirme le succès de l'attaque. Comme le montre la sortie ci-dessous, après l'envoi du payload final (valeur cible \code{0xf9}), nous obtenons un shell interactif nous permettant d'exécuter des commandes arbitraires.
+
+\begin{lstlisting}[caption={Log d'exécution finale et obtention du shell}, language=bash, literate={é}{\'e}1]
+[*] === Etape 3 : Ecriture de la chaine ROP ===
+...
+[*] Ecriture de 0x5f51 a l'adresse 0x7ffc71bc57e4
+[*] Ecriture de 0x6e69622f a l'adresse 0x7ffc71bc57e8
+[*] Ecriture de 0x68732f a l'adresse 0x7ffc71bc57ec
+[*] Payload pour ecraser l'adresse de retour avec le gadget RET envoye (Valeur cible: 0xf9)
+[*] Switching to interactive mode
+
+ping: %249c%7: Name or service not known
+$ echo "Hello World !"
+Hello World !
+$ echo "TP termine"
+TP termine
+\end{lstlisting}
+
+\begin{center}
+    \textit{L'accès shell est confirmé, l'exploitation est réussie.}
+\end{center}
