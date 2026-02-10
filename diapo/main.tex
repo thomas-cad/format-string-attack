@@ -1,9 +1,9 @@
-\documentclass[11pt]{beamer}
+\documentclass[11pt, aspectratio=169]{beamer}
 
 % --- Encodage et Langue ---
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[french]{babel}
+% \usepackage[french]{babel} % nécessite texlive-lang-french
 
 % --- Graphismes ---
 \usepackage{graphicx}
@@ -13,38 +13,40 @@
 \usepackage{listings}
 \usepackage{hyperref}
 
-% --- Palette de couleurs "Modern Coding" ---
-\definecolor{codebg}{rgb}{0.98, 0.98, 1.0}
-\definecolor{keywordblue}{HTML}{005CC5}    % Commandes
-\definecolor{parameterorange}{HTML}{E36209} % Options (-)
-\definecolor{stringgreen}{HTML}{22863A}    % Chemins et textes
-\definecolor{commentgray}{HTML}{6A737D}    % Commentaires
-\definecolor{bordergray}{HTML}{E1E4E8}     % Bordures
+% --- Thème Beamer ---
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
 
-% --- Configuration de listings (Coloré + Numéroté) ---
+% --- Palette de couleurs "Modern Coding" ---
+\definecolor{codebg}{rgb}{0.97, 0.97, 1.0}
+\definecolor{keywordblue}{HTML}{005CC5}
+\definecolor{parameterorange}{HTML}{E36209}
+\definecolor{stringgreen}{HTML}{22863A}
+\definecolor{commentgray}{HTML}{6A737D}
+\definecolor{bordergray}{HTML}{E1E4E8}
+\definecolor{sectioncolor}{HTML}{2C3E50}
+
+% --- Configuration de listings ---
 \lstset{
     backgroundcolor=\color{codebg},
-    basicstyle=\ttfamily\small\color{black},
+    basicstyle=\ttfamily\scriptsize\color{black},
     breaklines=true,
     columns=fullflexible,
     showstringspaces=false,
-    % Numérotation
     numbers=left,
     numberstyle=\tiny\color{commentgray},
     stepnumber=1,
-    numbersep=10pt,
-    % Bordures et Marges
+    numbersep=8pt,
     frame=single,
     rulecolor=\color{bordergray},
-    framesep=6pt,
-    xleftmargin=20pt,
-    % Styles
+    framesep=4pt,
+    xleftmargin=15pt,
     keywordstyle=\color{keywordblue}\bfseries,
     commentstyle=\color{commentgray}\itshape,
     stringstyle=\color{stringgreen},
-    % Mots-clés OpenSSL
     morekeywords={openssl, genpkey, genrsa, req, x509, ca, pkcs12, s_client, s_server},
-    % Paramètres et options
     literate={-}{{\textcolor{parameterorange}{-}}}1
              {=}{{\textcolor{keywordblue}{=}}}1,
     emph={algorithm, pkeyopt, out, key, days, subj, config, extensions, in, export, inkey, certfile, name, connect, CAfile},
@@ -55,32 +57,39 @@
 \newcommand{\code}[1]{\texttt{\small\colorbox{codebg}{\textcolor{black}{#1}}}}
 
 % --- Informations du document ---
-\title{Exploitation des chaînes de format (Format String)}
-\subtitle{CSC\_4CS03\_TP - Cyberattaques : menaces et mises en œuvre}
-\author{Thomas Cadegros, Yahya Moustahsane}
+\title{Exploitation des chaînes de format}
+\subtitle{CSC\_4CS03\_TP -- Cyberattaques : menaces et mises en \oe uvre}
+\author{Thomas Cadegros \and Yahya Moustahsane}
 \date{Février 2026}
 \institute{\includegraphics[height=1cm]{src/image/logo_tp.png}}
 
+% --- Frame de titre de section automatique ---
+\AtBeginSection[]{
+  \begin{frame}
+    \vfill
+    \centering
+    \usebeamerfont{title}\textcolor{sectioncolor}{\insertsectionnumber.~\insertsection}
+    \vfill
+  \end{frame}
+}
+
 \begin{document}
 
+% --- Page de titre ---
 \begin{frame}
     \titlepage
 \end{frame}
 
+% --- Sommaire ---
+\begin{frame}{Sommaire}
+    \tableofcontents
+\end{frame}
+
 % --- Parties du TP ---
-\section{Partie 1}
 \input{src/partie1}
-
-\section{Partie 2}
 \input{src/partie2}
-
-\section{Partie 3}
 \input{src/partie3}
-
-\section{Partie 4}
 \input{src/partie4}
-
-\section{Partie 5}
 \input{src/partie5}
 
 \end{document}

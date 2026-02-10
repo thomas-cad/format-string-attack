@@ -1,66 +1,48 @@
-\section{Calcul des distances nécessaires à la chaîne ROP}
+\section{Calcul des distances pour la chaîne ROP}
 
-Pour contourner la protection PIE (\textit{Position Independent Executable}), les adresses absolues ne sont pas fiables. Nous devons calculer les \textbf{distances relatives} (offsets) entre notre point de détournement (l'adresse de retour sur la pile) et nos cibles.
+% --- Slide 1 : Gadget pop rdi ---
+\begin{frame}[fragile]{Identification du gadget \texttt{pop rdi ; ret}}
+    Pas d'instruction explicite \texttt{pop rdi} dans le binaire, mais :
 
-\subsection{Identification des adresses clés via GDB}
-
-À l'aide du débogueur, nous avons extrait les adresses suivantes lors d'une session d'exécution unique :
-
-\begin{itemize}
-    \item \textbf{Adresse de référence ($Ref$)} : Il s'agit de l'adresse de retour sauvegardée sur la pile par la fonction \texttt{makePing}. Dans le désassemblage de \texttt{main}, c'est l'instruction suivant immédiatement l'appel :
-    \begin{lstlisting}[language=bash, basicstyle=\footnotesize\ttfamily]
-0x00005555555554ee <+24>:    call   0x5555555553b3 <makePing>
-0x00005555555554f3 <+29>:    mov    $0x0,%eax  <-- ADRESSE REF
+    \begin{lstlisting}[language=bash]
+0x555555555562 <+98>:    pop    %r15   ; opcode: 41 5f
+0x555555555564 <+100>:   ret            ; opcode: c3
     \end{lstlisting}
-    
-    \item \textbf{Adresse de System ($System$)} : L'entrée de la fonction dans la PLT.
-    \item \textbf{Adresse du Gadget ($Gadget$)} : Nous avons identifié un "Universal Gadget" dans la fonction \texttt{\_\_libc\_csu\_init}.
-\end{itemize}
 
-\subsubsection{Analyse du Gadget "POP RDI" dans \texttt{\_\_libc\_csu\_init}}
+    \begin{itemize}
+        \item \texttt{pop r15} = \code{41 5f}, \texttt{pop rdi} = \code{5f}
+        \item En sautant 1 octet : le CPU exécute \code{5f c3} = \texttt{pop rdi ; ret}
+    \end{itemize}
+    \[ \text{Adresse gadget} = \texttt{0x555555555562} + 1 = \textbf{\texttt{0x555555555563}} \]
+\end{frame}
 
-L'instruction explicite \texttt{pop rdi} n'est pas présente. Cependant, l'instruction \texttt{pop r15} située à la fin de la fonction d'initialisation permet de la simuler.
+% --- Slide 2 : Tableau et calculs ---
+\begin{frame}{Calcul des offsets}
+    \begin{table}
+        \centering
+        \begin{tabular}{|l|c|}
+            \hline
+            \textbf{Élément} & \textbf{Adresse} \\
+            \hline
+            Référence -- Saved RIP & \texttt{0x...54f3} \\
+            \hline
+            Gadget -- \texttt{pop rdi ; ret} & \texttt{0x...5563} \\
+            \hline
+            \texttt{system@plt} & \texttt{0x...5100} \\
+            \hline
+        \end{tabular}
+    \end{table}
 
-\begin{lstlisting}[language=bash, caption={Désassemblage partiel de \_\_libc\_csu\_init}]
-0x0000555555555562 <+98>:    pop    %r15
-0x0000555555555564 <+100>:   ret
-\end{lstlisting}
-
-En code machine, \texttt{pop r15} est encodé par \code{41 5f}. L'instruction \texttt{pop rdi} correspond à l'opcode \code{5f}. En sautant le premier octet (offset +1), le processeur exécute \code{5f} (pop rdi) suivi de \code{c3} (ret).
-
-\[ Adresse_{Gadget} = 0x555555555562 + 1 = \textbf{0x555555555563} \]
-
-\subsection{Tableau récapitulatif des adresses}
-
-\begin{table}[H]
-    \centering
-    \begin{tabular}{|l|l|c|}
-        \hline
-        \textbf{Élément} & \textbf{Description} & \textbf{Adresse (Hex)} \\
-        \hline
-        Référence ($Ref$) & Adresse de retour (dans main) & \texttt{0x5555555554f3} \\ 
-        \hline
-        Cible 1 ($Gadget$) & \texttt{pop rdi ; ret} (csu\_init) & \texttt{0x555555555563} \\ 
-        \hline
-        Cible 2 ($System$) & \texttt{system@plt} & \texttt{0x555555555100} \\ 
-        \hline
-    \end{tabular}
-    \caption{Adresses relevées sous GDB}
-\end{table}
-
-\subsection{Calcul des Distances ($\Delta$)}
-
-Nous calculons la distance $\Delta$ à appliquer à l'adresse de retour ($Ref$) pour atteindre les cibles.
-
-\subsubsection{Distance vers le Gadget (POP RDI)}
-\[ \Delta_{Gadget} = Gadget - Ref \]
-\[ \Delta_{Gadget} = 0x555555555563 - 0x5555555554f3 = \textbf{+0x70} \]
-
-\textbf{Interprétation :} Le gadget se trouve exactement 112 octets (0x70) après l'adresse de retour. 
-Cette distance est très faible ($< 256$). Cela confirme qu'il est possible d'atteindre ce gadget en modifiant uniquement l'\textbf{octet de poids faible (LSB)} de l'adresse de retour (remplacement de \code{0xf3} par \code{0x63} et ajustement éventuel du nibble précédent), validant la stratégie de l'attaque sans connaître l'adresse de base complète (ASLR).
-
-\subsubsection{Distance vers System}
-\[ \Delta_{System} = System - Ref \]
-\[ \Delta_{System} = 0x555555555100 - 0x5555555554f3 = \textbf{-0x3F3} \]
-
-\textbf{Interprétation :} La fonction \texttt{system} se situe 1011 octets avant l'adresse de retour. Ce décalage constant sera utilisé dans le script d'exploitation pour calculer l'adresse réelle de \texttt{system} à partir de la fuite d'adresse (leak).
+    \vspace{0.3cm}
+    \textbf{Distances relatives :}
+    \begin{itemize}
+        \item $\Delta_{\text{Gadget}} = \texttt{0x5563} - \texttt{0x54f3} = \textbf{+0x70}$ (112 octets)
+            \begin{itemize}
+                \item[$\rightarrow$] $< 256$ : atteignable en modifiant 1 seul octet (LSB)
+            \end{itemize}
+        \item $\Delta_{\text{System}} = \texttt{0x5100} - \texttt{0x54f3} = \textbf{-0x3F3}$ (--1011 octets)
+            \begin{itemize}
+                \item[$\rightarrow$] Offset constant, calculé à partir du leak d'adresse
+            \end{itemize}
+    \end{itemize}
+\end{frame}
