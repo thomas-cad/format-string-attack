@@ -1,0 +1,58 @@
+\section{Déclenchement final et obtention du shell}
+
+% --- Slide 1 : Gadget RET intermédiaire ---
+\begin{frame}[fragile]{Gadget RET intermédiaire}
+    \textbf{Pourquoi ne pas sauter directement sur \texttt{pop rdi ; ret} ?}
+
+    \vspace{0.3cm}
+    \begin{enumerate}
+        \item \textbf{Alignement pile :} x86\_64 exige un alignement 16 octets pour certaines fonctions GLIBC
+        \item \textbf{Glissement :} le gadget \texttt{ret} dépile la valeur suivante $\rightarrow$ tombe sur notre ROP chain
+    \end{enumerate}
+
+    \vspace{0.3cm}
+    \textbf{LSB Overwrite} (même technique que la boucle) :
+    \begin{itemize}
+        \item Saved RIP actuel : \code{0x...14\textbf{f3}}
+        \item Gadget RET cible : \code{0x...14\textbf{f9}}
+        \item[$\rightarrow$] Écraser 1 octet : \texttt{0xf3} $\rightarrow$ \texttt{0xf9}
+    \end{itemize}
+
+    \begin{lstlisting}[language=Python]
+payload = f"%{addr_ret_lsb}c%7$hhn"   # addr_ret_lsb = 0xf9 = 249
+    \end{lstlisting}
+\end{frame}
+
+% --- Slide 2 : Séquence d'exécution ---
+\begin{frame}{Séquence d'exécution finale}
+    \begin{enumerate}
+        \item LSB du Saved RIP : \texttt{0xf3} $\rightarrow$ \texttt{0xf9}
+        \item \texttt{ret} de \texttt{makePing} $\rightarrow$ saute sur le gadget \texttt{ret} du \texttt{main}
+        \item Gadget \texttt{ret} $\rightarrow$ dépile l'adresse de \texttt{pop rdi ; ret}
+        \item \texttt{pop rdi} $\rightarrow$ charge l'adresse de \texttt{"/bin/sh"} dans RDI
+        \item \texttt{ret} $\rightarrow$ saute sur \texttt{system()}
+        \item[$\Rightarrow$] \textbf{Shell interactif obtenu}
+    \end{enumerate}
+\end{frame}
+
+% --- Slide 3 : Démonstration ---
+\begin{frame}[fragile]{Démonstration}
+    \begin{lstlisting}[language=bash]
+[*] === Etape 3 : Ecriture de la chaine ROP ===
+[*] Ecriture de 0x5f51 a l'adresse 0x7ffc71bc57e4
+[*] Ecriture de 0x6e69622f a l'adresse 0x7ffc71bc57e8
+[*] Ecriture de 0x68732f a l'adresse 0x7ffc71bc57ec
+[*] Payload envoye (Valeur cible: 0xf9)
+[*] Switching to interactive mode
+
+ping: %249c%7: Name or service not known
+$ echo "Hello World !"
+Hello World !
+$ echo "TP termine"
+TP termine
+    \end{lstlisting}
+
+    \begin{center}
+        \textbf{Exploitation réussie -- accès shell confirmé.}
+    \end{center}
+\end{frame}

