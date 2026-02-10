@@ -16,7 +16,7 @@ D'après l'analyse dynamique et les logs du script :
 L'utilisation de ce gadget intermédiaire est indispensable pour deux raisons :
 \begin{enumerate}
     \item \textbf{Alignement de la pile (Stack Alignment) :} L'architecture x86\_64 impose que la pile soit alignée sur 16 octets lors de l'appel à certaines fonctions de la GLIBC.
-    \item \textbf{Mécanisme de "Glissement" :} Le gadget \code{ret} effectue l'opération \code{pop rip}. Il va donc dépiler la valeur suivante sur la pile et sauter dessus. Or, nous avons écrit le début de notre chaîne ROP (le gadget \code{pop rdi}) juste au-dessus de l'adresse de retour (à \code{RBP+16}).
+    \item \textbf{Mécanisme de "Glissement" :} Le gadget \code{ret} effectue l'opération \code{pop rip}. Il va donc dépiler la valeur suivante sur la pile et sauter dessus. Or, nous avons écrit le début de notre chaîne ROP (le gadget \code{pop rdi}) juste au-dessus de l'adresse de retour à \code{RBP+16}.
 \end{enumerate}
 
 \subsection{La technique du "LSB Overwrite"}
@@ -32,18 +32,20 @@ Dans notre cas d'exécution :
     \item Adresse Gadget RET cible : \code{0x5f51361d14\textbf{f9}}
 \end{itemize}
 
-La différence ne réside que dans le dernier octet. Il est donc inutile de connaître l'adresse de base aléatoire. Il suffit d'écraser le dernier octet \code{0xf3} par \code{0xf9} pour réussir le détournement de manière fiable à 100\%.
+La différence ne réside que dans le dernier octet. Il est donc inutile de connaître l'adresse de base aléatoire. Il suffit d'écraser le dernier octet \code{0xf3} par \code{0xf9}.
 
 \subsection{Charge utile finale (Trigger)}
 
-Le payload final injecté par le script est construit ainsi :
+Le payload final est construit dynamiquement par le script avec la f-string suivante :
 
-\[ \text{Payload} = \text{"\%249c\%7\\\$hhn"} \]
+\[ \code{payload = f"\%\{addr\_ret\_lsb\}c\%7\$hhn"} \]
+
+où \code{addr\_ret\_lsb} est calculé comme \code{addr\_ret \& 0xff}.
 
 \begin{itemize}
-    \item \textbf{\%249c} : Le script calcule \code{addr\_ret \& 0xff}, ce qui donne \code{0xf9} (soit 249 en décimal). La fonction \code{printf} affiche donc 249 caractères de bourrage pour ajuster son compteur interne.
+    \item \textbf{\%\{addr\_ret\_lsb\}c} : Le script calcule \code{addr\_ret \& 0xff} pour extraire le LSB de l'adresse du gadget RET. Dans notre exemple d'exécution, cela donne \code{0xf9} (soit 249 en décimal). La fonction \code{printf} affiche donc ce nombre de caractères de bourrage pour ajuster son compteur interne.
     \item \textbf{\%7\$} : Nous sélectionnons le 7\textsuperscript{e} argument sur la pile, qui correspond au pointeur vers le Saved RIP (identifié en section 2).
-    \item \textbf{hhn} : Le spécificateur \code{n} écrit le nombre de caractères affichés (249) à l'adresse pointée. Le modificateur \code{hh} assure que l'écriture se fait sur \textbf{un seul octet}.
+    \item \textbf{hhn} : Le spécificateur \code{n} écrit le nombre de caractères affichés à l'adresse pointée. Le modificateur \code{hh} assure que l'écriture se fait sur \textbf{un seul octet}.
 \end{itemize}
 
 \subsection{Séquence d'exécution finale}

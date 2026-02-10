@@ -21,7 +21,7 @@ Pour contourner la protection PIE (\textit{Position Independent Executable}), le
 \subsubsection{Analyse des Gadgets}
 
 \paragraph{Gadget "POP RDI" :}
-L'instruction explicite \texttt{pop rdi} n'est pas présente. Cependant, l'instruction \texttt{pop r15} (\code{41 5f}) située à la fin de la fonction d'initialisation permet de la simuler en sautant le premier octet.
+En l'absence d'instruction \texttt{pop rdi} explicite, nous exploitons la séquence de nettoyage de la fonction standard \texttt{\_\_libc\_csu\_init}. L'instruction \texttt{pop r15} qui s'y trouve (à l'adresse \texttt{0x...5562}) est encodée par les octets \texttt{\textbf{41} 5f c3}. En ciblant l'exécution un octet plus loin (à \texttt{0x...5563}), nous forçons le processeur à ignorer le préfixe \texttt{41} et à interpréter le reste (\texttt{5f c3}) comme l'instruction \texttt{pop rdi ; ret}, créant ainsi le gadget nécessaire artificiellement.
 \[ Adresse_{POP} = 0x555555555562 + 1 = \textbf{0x555555555563} \]
 
 \paragraph{Gadget "RET" :}
